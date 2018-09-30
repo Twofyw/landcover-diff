@@ -16,14 +16,20 @@ def open_image(fn, grayscale=False, squeeze=False, norm=False, convert_to_rgb=Tr
         raise OSError('Error handling image at: {}'.format(fn)) from e
 
 
-def calc_mean_std(fns):
-    mean, std = np.zeros(3), np.zeros(3)
-    for fn in tqdm_notebook(fns):
-        im = open_image(fn)
-        mean += np.mean(im, axis=(0, 1))
-        std  += np.std(im, axis=(0, 1))
-
-    mean /= len(fns)
-    std /= len(fns)
+def calc_mean_std(fn):
+    im = open_image(fn)
+    mean, std = np.mean(im, axis=(0, 1)), np.std(im, axis=(0, 1))
     return mean, std
+    
+def parallel_mean_std(fns, num_workers=(cpu_count() / 2)):
+    if not isinstance(fns, list): fns = [fns]
+    fns = [str(o) for o in fns]
+    with ThreadPoolExecutor(num_workers) as e:
+        res = e.map(calc_mean_std, fns)
+        
+    means, stds = zip(*res)
+    mean, std = np.mean(means, axis=0), np.std(stds, axis=0)
+    return mean, std
+    
+    
     

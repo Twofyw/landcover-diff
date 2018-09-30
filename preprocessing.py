@@ -50,14 +50,17 @@ def crop_and_save(fns, path_target, size=512, overlap=0.1, pad_mode=cv2.BORDER_R
                 
         print(f'{counter} patchs saved to {str(path_target)} for img {fn.name}')
         
-def parallel_crop_and_save(fns, path_target, size=512, overlap=0.1, pad_mode=cv2.BORDER_REFLECT, num_workers=(cpu_count() / 2)):
+def parallel_crop_and_save(fns, path_target, size=512, overlap=0.1, pad_mode=cv2.BORDER_REFLECT, num_workers=(cpu_count() / 2), recreate_target_path=False):
     """ run crop_and_save in parallel
     """
-    f = partial(crop_and_save, path_target=path_target, size=size, overlap=overlap, pad_mode=pad_mode)
+    path_target = Path(path_target)
+    if recreate_target_path: shutil.rmtree(str(path_target))
+    path_target.mkdir(exist_ok=True)
+    f = partial(crop_and_save, path_target=path_target, size=size, overlap=overlap, pad_mode=pad_mode, recreate_target_path=False)
     
     with ThreadPoolExecutor(num_workers) as e:
         list(e.map(f, fns))
-                
+        
 def crop_aerial(fn_dir, path_target, **args):
     fns = [o for o in fn_dir.iterdir() if o.stem[0] != '.']
     crop_and_save(fns, path_target, **args)
