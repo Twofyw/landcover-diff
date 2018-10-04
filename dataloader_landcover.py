@@ -4,11 +4,22 @@ from torch.utils.data.distributed import DistributedSampler
 from fastai.transforms import *
 from torch.utils.data import DataLoader
 
+labels = {
+    (0,255,255): 'Urban land',
+    (255,255,0): 'Agriculture land',
+    (255,0,255): 'Rangeland',
+    (0,255,0): 'Forest land',
+    (0,0,255): 'Water',
+    (255,255,255): 'Barren land',
+    (0,0,0): 'Unknown'
+}
+
 class Landcover(BaseDataset):
-    def __init__(self, fn_x, fn_y, transform=None, classes=2):
+    def __init__(self, fn_x, fn_y, transform=None, classes=7, labels=labels):
         self.fn_x = [str(o) for o in fn_x]
         self.fn_y = [str(o) for o in fn_y]
         self.classes = classes
+        self.labels = labels
         super().__init__(transform)
 
     def get_n(self):
@@ -24,7 +35,10 @@ class Landcover(BaseDataset):
         return open_image(self.fn_x[i])
     
     def get_y(self, i):
-        return open_image(self.fn_y[i])
+        if self.labels: 
+            return to_class(open_image_new(self.fn_y[i], norm=False), self.labels)
+        else:
+            return open_image(self.fn_x[i])
 
     def denorm(self, arr, is_y=False):
         """Reverse the normalization done to a batch of images.
@@ -82,7 +96,7 @@ class DataPrefetcher():
         if self.gpu:
             with torch.cuda.stream(self.stream):
                 self.next_input = self.next_input.cuda(async=True)
-                self.next_target = self.next_target.cuda(async=True)
+                self.next_target = self.next_target.cuda(async=True).long()
 
     def __iter__(self):
         count = 0
@@ -122,12 +136,13 @@ def get_ds(fn, trn, val, tfms, test=None, **kwargs):
         else: res += [None,None]
         return res
     
-class Copy(CoordTransform):
-    def __init__(self, tfm_y=TfmType.PIXEL):
-        super().__init__(tfm_y)
+tfm_y = TfmType.CLASS
+class Copy(Transform):
+    def __init__(self):
+        super().__init__()
 
     def do_transform(self, x, is_y):
-        return x.copy()
+        return np.ascontiguousarray(x)
     
 def get_loader(PATH, path_x, path_y, stats, bs, sz, test_size=0.2, world_size=1, num_workers=16, path_test_x=None, path_test_y=None):
     distributed = world_size > 1
@@ -139,14 +154,13 @@ def get_loader(PATH, path_x, path_y, stats, bs, sz, test_size=0.2, world_size=1,
     trn, val = (trn_x, trn_y), (val_x, val_y)
     
     # transformations
-    tfm_y = TfmType.PIXEL
     aug_tfms = [o for o in transforms_top_down]
     aug_tfms.append(Copy())
     for t in aug_tfms: t.tfm_y = tfm_y
     tfms = tfms_from_stats(stats, sz, aug_tfms=aug_tfms, tfm_y=tfm_y, norm_y=False)
     for o in tfms: o.tfms.append(Copy()) # fix pytorch negative error
     
-    datasets = get_ds(Landcover, trn, val, tfms, classes=None)
+    datasets = get_ds(Landcover, trn, val, tfms, classes=7)
     denorm = datasets[0].denorm
     trn_sampler = (DistributedSampler(datasets[0], world_size) if distributed else None)
     

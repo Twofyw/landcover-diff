@@ -139,7 +139,8 @@ class DinkNet34_less_pool(nn.Module):
     
 class DinkNet34(nn.Module):
     def __init__(self, num_classes=1, num_channels=3):
-        super(DinkNet34, self).__init__()
+        super().__init__()
+        self.num_classes = num_classes
 
         filters = [64, 128, 256, 512]
         resnet = models.resnet34(pretrained=True)
@@ -164,6 +165,8 @@ class DinkNet34(nn.Module):
         self.finalconv2 = nn.Conv2d(32, 32, 3, padding=1)
         self.finalrelu2 = nonlinearity
         self.finalconv3 = nn.Conv2d(32, num_classes, 3, padding=1)
+        
+        self.lastlayer = nn.LogSoftmax() if num_classes > 1 else nn.Sigmoid()
 
     def forward(self, x):
         # Encoder
@@ -191,7 +194,7 @@ class DinkNet34(nn.Module):
         out = self.finalrelu2(out)
         out = self.finalconv3(out)
 
-        return F.sigmoid(out)
+        return self.lastlayer(out)
 
 class DinkNet50(nn.Module):
     def __init__(self, num_classes=1):

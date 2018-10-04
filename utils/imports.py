@@ -8,6 +8,7 @@ import argparse
 import torch.backends.cudnn as cudnn
 from multiprocessing import cpu_count
 from sklearn.model_selection import train_test_split
+from fire import Fire
 
 from .plots import *
 from .misc import *

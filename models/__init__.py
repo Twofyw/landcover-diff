@@ -1,0 +1,1 @@
+from .dinknet import DinkNet34 as DlinkNet34

@@ -1,6 +1,6 @@
 from utils.imports import *
 
-def open_image(fn, grayscale=False, squeeze=False, norm=False, convert_to_rgb=True):
+def open_image_new(fn, grayscale=False, squeeze=False, norm=False, convert_to_rgb=True):
     flags = cv2.IMREAD_GRAYSCALE if grayscale else cv2.IMREAD_UNCHANGED+cv2.IMREAD_ANYDEPTH+cv2.IMREAD_ANYCOLOR
     try:
         im = cv2.imread(str(fn), flags).astype(np.float32)
@@ -31,5 +31,10 @@ def parallel_mean_std(fns, num_workers=(cpu_count() / 2)):
     mean, std = np.mean(means, axis=0), np.std(stds, axis=0)
     return mean, std
     
-    
-    
+def to_class(im, labels):
+    class_shape = im.shape[:-1]
+    classes, index = np.zeros(class_shape, dtype=np.int32), np.zeros(class_shape, dtype=np.bool)
+    for c, value in enumerate(labels):
+        np.all((im == value), axis=-1, out=index)
+        classes[index] = c
+    return np.broadcast_to(classes[:,:,None], class_shape + (3,))
