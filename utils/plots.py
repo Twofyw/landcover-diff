@@ -1,16 +1,17 @@
 from fastai.imports import *
 #from matplotlib import pyplot as plt, rcParams, animation
 # from .torch_imports import *
+from math import ceil
 from sklearn.metrics import confusion_matrix
 
 def ceildiv(a, b):
     return -(-a // b)
 
-def plots(ims, figsize=(12,12), rows=4, interp=False, titles=None, maintitle=None, **args):
-    if type(ims[0]) is np.ndarray:
-        ims = np.asarray(ims)
-        if (ims.shape[-1] not in [1, 3]): ims = ims.transpose((0,2,3,1))
-        if ims.shape[-1] == 1: ims = ims.squeeze()
+def plots(ims, figsize=None, rows=4, interp=False, titles=None, maintitle=None, size=3, **args):
+    l = len(ims)
+    if figsize is None:
+        columns = ceil(l / rows)
+        figsize = (size * columns, size * rows)
     f = plt.figure(figsize=figsize)
     if maintitle is not None:
         plt.suptitle(maintitle, fontsize=16)

@@ -2,8 +2,8 @@ from dataloader_landcover import *
 import models
 from fastai.sgdr import Callback
 from fastai.conv_learner import *
-import torch.distributed as dist
-from distributed import DistributedDataParallel as DDP
+#import torch.distributed as dist
+from torch.nn.parallel import DataParallel
 
 md = None
 
@@ -12,7 +12,6 @@ def update_model_dir(learner, base_dir):
     os.makedirs(learner.tmp_path, exist_ok=True)
     learner.models_path = f'{base_dir}/models'
     os.makedirs(learner.models_path, exist_ok=True)
-    
 
 def save_sched(sched, save_dir):
     if (_rank != 0) or not save_dir: return 
@@ -64,38 +63,37 @@ def save_args(name, save_dir):
     }
 
 _use_clr, _cycle_len, _rank, _save_dir = None, None, None, None
-learner = None
+learner, denorm = None, None
 
 def get_learner(PATH, path_x, path_y, save_dir, path_stats, bs, sz, gpu_start, arch='DlinkNet34', world_size=1, test_size=0.2,
           num_workers=16, resume=False, use_clr=None, cycle_len=1, lr=0.01, momentum=0.9, wd=1e-4, epochs=1, # debug
           loss_scale=1,
-          path_test_x=None, path_test_y=None):
+          load_model=None, path_test_x=None, path_test_y=None):
     global md, print_freq, _use_clr, _cycle_len, _rank
-    global learner
-    _use_clr, _cycle_len, _rank, _save_dir = use_clr, cycle_len, rank, save_dir
+    global learner, denorm
+    _use_clr, _cycle_len, _save_dir = use_clr, cycle_len, save_dir
     torch.cuda.set_device(gpu_start)
+    device_ids = range(gpu_start, gpu_start + world_size)
     
     stats = np.load(path_stats)
-    md, trn_sampler, denorm = get_loader(PATH, path_x, path_y, stats, bs, sz, test_size,
-                                         world_size, num_workers, path_test_x, path_test_y)
+    md, denorm = get_loader(PATH, path_x, path_y, stats, bs, sz, classes=7, test_size=test_size,
+                        num_workers=num_workers, path_test_x=path_test_x, path_test_y=path_test_y)
     
     # This is important for speed
     cudnn.benchmark = True
     
     distributed = world_size > 1
     model = models.__dict__[arch](num_classes=7)
-    if distributed: model = DDP(model)
+    if distributed: model = DataParallel(model, device_ids)
         
     learner = Learner.from_model_data(model, md)
     learner.crit = F.cross_entropy
+    if load_model is not None:
+        sd = torch.load(load_model, map_location=lambda storage, loc: storage)
+        learner.model.load_state_dict(sd)
     # Full size
     update_model_dir(learner, save_dir)
     sargs = save_args('first_run', save_dir)
-    #learner.fit(lr,epochs, cycle_len=cycle_len,
-    #            wds=wd, use_clr_beta=use_clr,
-    #            loss_scale=loss_scale, **sargs)
-    #save_sched(learner.sched, args.save_dir)
-    #return learner
 
     
 if __name__ == '__main__':
