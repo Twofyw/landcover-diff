@@ -2,15 +2,24 @@ from utils.imports import *
 from fastai.dataset import *
 
 labels = {
-    (128,128,0): '耕地',
-    (64,192,0): '林地',
-    (128,128,192): '建筑', 
-    (128,64,128): '公路', 
-    (192,128,128): '人工构筑物', 
-    (192,192,128): '裸露地表', 
-    (128,128,128): '水', 
+    (128,128,0): '耕地',        # 1
+    (64,192,0): '林地',         # 2
+    (128,128,192): '建筑',      # 3
+    (128,64,128): '公路',       # 4
+    (192,128,128): '人工构筑物',# 5
+    (192,192,128): '裸露地表',  # 6
+    (128,128,128): '水',        # 7
 }
 
+py_labels = {
+    (128,128,0): 'Agriculture land',        # 1
+    (64,192,0): 'Forest land',         # 2
+    (128,128,192): 'Buildings',      # 3
+    (128,64,128): 'Roads',       # 4
+    (192,128,128): 'Artificial Structures',# 5
+    (192,192,128): 'Barren land',  # 6
+    (128,128,128): 'Water',        # 7
+}
     
 class Shanghai5120(BaseDataset):
     def __init__(self, fn_x, fn_y, transform=None, classes=7):
@@ -55,11 +64,12 @@ def get_loader(PATH, path_x, path_y, stats, bs, sz, classes=7, test_size=0.2, nu
                benchmark=False, path_test_x=None, path_test_y=None, random_state=123456):
     # paths
     path_x, path_y = Path(path_x), Path(path_y)
-    path_test_x, path_test_y = Path(path_test_x), Path(path_test_y)
     fn_x = sorted(path_x.glob('*.png'))
     fn_y = sorted(path_y.glob('*.png'))
     trn_x, val_x, trn_y, val_y = train_test_split(fn_x, fn_y, test_size=test_size, random_state=random_state)
     trn, val = (trn_x, trn_y), (val_x, val_y)
+    if path_test_x is not None:
+        path_test_x, path_test_y = Path(path_test_x), Path(path_test_y)
     test = (sorted(path_test_x.glob('*.png')), sorted(path_test_y.glob('*.png'))) if path_test_x is not None else None 
     
     # transformations

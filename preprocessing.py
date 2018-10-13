@@ -2,7 +2,8 @@ from utils.imports import *
 from utils.misc import *
 from math import ceil
 
-def crop_and_save(fns, path_target, size=512, overlap=0.1, pad_mode=cv2.BORDER_REFLECT, recreate_target_path=False, labels=None):
+def crop_and_save(fns, path_target, size=512, overlap=0.1, grayscale=False, pad_mode=cv2.BORDER_REFLECT,
+                  recreate_target_path=False, labels=None, preprocess_fs=None):
     """ Cropfull imagery into patches
     both 1-channel and 3-channel images are considered.
     
@@ -24,8 +25,11 @@ def crop_and_save(fns, path_target, size=512, overlap=0.1, pad_mode=cv2.BORDER_R
     
     print_stat = True
     for fn in fns:
-        im = open_image_new(str(fn), grayscale=False, convert_to_rgb=False, norm=False)
-        
+        im = open_image_new(str(fn), grayscale=grayscale, convert_to_rgb=False, norm=False)
+        #if(np.unique(im).shape[0] != 3):  set_trace()
+        if preprocess_fs is not None:
+            if not isinstance(preprocess_fs, list): preprocess_fs = [preprocess_fs]
+            for f in preprocess_fs: im = f(im)
         # some math
         full_side = im.shape[0]
         n_side = ceil((full_side - overlap_p) / (size - overlap_p))
@@ -57,18 +61,21 @@ def crop_and_save(fns, path_target, size=512, overlap=0.1, pad_mode=cv2.BORDER_R
                 
         print(f'{counter} patchs saved to {str(path_target)} for img {fn.name}')
         
-def parallel_crop_and_save(fns, path_target, size=512, overlap=0.1, pad_mode=cv2.BORDER_REFLECT, num_workers=(cpu_count() // 2),
-                           recreate_target_path=False, labels=None):
+def parallel_crop_and_save(fns, path_target, size=512, overlap=0.1, grayscale=False, pad_mode=cv2.BORDER_REFLECT, num_workers=None,
+                           recreate_target_path=False, labels=None, preprocess_fs=None):
     """ run crop_and_save in parallel
     """
     path_target = Path(path_target)
     if recreate_target_path: shutil.rmtree(str(path_target), ignore_errors=True)
     path_target.mkdir(exist_ok=True)
     f = partial(crop_and_save, path_target=path_target, size=size, overlap=overlap, pad_mode=pad_mode,
-                recreate_target_path=False, labels=labels)
+                recreate_target_path=False, labels=labels, grayscale=grayscale, preprocess_fs=preprocess_fs)
     
-    with ThreadPoolExecutor(num_workers) as e:
-        list(e.map(f, fns))
+    if num_workers is None or num_workers > 1:
+        with ProcessPoolExecutor(num_workers) as e:
+            list(tqdm_notebook(e.map(f, fns), total=len(fns)))
+    else:
+            list(tqdm_notebook(map(f, fns), total=len(fns)))
         
 def crop_aerial(fn_dir, path_target, **args):
     fns = [o for o in fn_dir.iterdir() if o.stem[0] != '.']
@@ -87,9 +94,19 @@ def parallel_rgb_to_labels(path_source_dir, path_target_dir, labels, num_workers
         list(e.map(f, fns, target_fns))
         
 def dir_parallel_mean_std(fn_dir, fn_stats=None, **args):
-    fn_dir, fn_stats = Path(fn_dir), str(fn_stats)
-    fns = [o for o in fn_dir.iterdir() if o.stem[0] != '.']
+    if not isinstance(fn_dir, list): fn_dir = [fn_dir]
+    fn_dir, fn_stats = [Path(o) for o in fn_dir], str(fn_stats)
+    fns = [o for d in fn_dir 
+           for o in d.iterdir() 
+           if o.stem[0] != '.']
     mean, std = parallel_mean_std(fns, **args)
     if fn_stats is not None: np.save(fn_stats, [mean, std])
     return mean, std
     
+def filter_label_cm(im):
+    accepted_pixels = [0, 76, 249]
+    mask_shape = im.shape[:-1]
+    mask = np.logical_and(*[im != o for o in accepted_pixels])
+    im[np.invert(mask)] = 255
+    im[mask] = 0
+    return im
