@@ -1,8 +1,7 @@
 from utils.imports import *
-from fastai.sgdr import Callback
-from fastai.transforms import *
+from fastai.callback import Callback
 from torch.utils.data import Dataset, DataLoader
-from fastai.dataset import ModelData
+#from fastai.vision.dataset import ModelData
 
 # Creating a custom logging callback. Fastai logger actually hurts performance by writing every batch.
 class Logging(Callback):
@@ -30,120 +29,65 @@ class Logging(Callback):
         self.f.close()
     def log(self, string):
         self.f.write(time.strftime("%Y-%m-%dT%H:%M:%S")+"\t"+string+"\n")
-        
-class BaseDataset(Dataset):
-    def __init__(self, fn_x, fn_y, transform=None):
-        self.fn_x, self.fn_y = fn_x, fn_y
-        self.transform = transform
-    
-    def __getitem__(self, i):
-        return self.get(self.get_x(i), self.get_y(i))
-    
-    def __len__(self): return len(self.fn_y)
-    
-    def get(self, x, y):
-        raise NotImplementedError
-        
-    def get_x(self, i):
-        raise NotImplementedError
-        
-    def get_y(self, i):
-        raise NotImplementedError
-        
-    def denorm(self, arr, is_y=False):
-        """Reverse the normalization done to a batch of images.
 
-        Arguments:
-            arr: of shape/size (N,3,sz,sz)
-        """
-        if type(arr) is not np.ndarray: arr = to_np(arr)
-        if not is_y:
-            if len(arr.shape)==3: arr = arr[None]
-            arr = np.rollaxis(arr,1,4)
-            arr = self.transform.denorm(arr)
-        else:
-            if len(arr.shape)==2: arr = arr[None]
-        return arr
-    
-class MyModelData(ModelData):
-    def __init__(self, path, datasets, bs, num_workers=None):
-        trn_ds,val_ds,fix_ds,aug_ds,test_ds,test_aug_ds = datasets
-        self.path, self.bs, self.num_workers = path,bs, num_workers
-        self.trn_dl,self.val_dl,self.fix_dl,self.aug_dl,self.test_dl,self.test_aug_dl = [
-            self.get_dl(ds,shuf) for ds,shuf in [
-                (trn_ds,True),(val_ds,False),(fix_ds,False),(aug_ds,False),
-                (test_ds,False),(test_aug_ds,False)
-            ]
-        ]
-    
+class CSVSegmentationDataset(SegmentationDataset):
+
     @classmethod
-    def get_ds(cls, fn, trn, val, tfms, test=None, **kwargs):
-        res = [
-            fn(trn[0], trn[1], tfms[0], **kwargs), # train
-            fn(val[0], val[1], tfms[1], **kwargs), # val
-            fn(trn[0], trn[1], tfms[1], **kwargs), # fix
-            fn(val[0], val[1], tfms[0], **kwargs)  # aug
-        ]
-        if test is not None:
-            if isinstance(test, tuple):
-                test_lbls = test[1]
-                test = test[0]
-            else:
-                if len(trn[1].shape) == 1:
-                    test_lbls = np.zeros((len(test),1))
-                else:
-                    test_lbls = np.zeros((len(test),trn[1].shape[1]))
-            res += [
-                fn(test, test_lbls, tfms[1], **kwargs), # test
-                fn(test, test_lbls, tfms[0], **kwargs)  # test_aug
-            ]
-        else: res += [None,None]
-        return res
-    
-    def get_dl(self, ds, shuffle):
-        if ds is None: return None
-        return DataLoader(ds, batch_size=self.bs, shuffle=shuffle,
-            num_workers=self.num_workers, pin_memory=False)
+    def from_csv(cls, x_path, y_path, csv_path, classes:Collection[Any], valid_pct:float=0.2, path:Optional[PathOrStr]=None, 
+                 header:Optional[Union[int,str]]='infer', suffix:Optional[str]='.png', **kwargs):
+        if path:
+            path = to_path(path)
+            x_path, y_path = path/x_path, path/y_path
+        else:
+            x_path, y_path = to_path(x_path, y_path)
+        fn_x, fn_y = csv_to_fns(csv_path, path=x_path, header=header, suffix=suffix), csv_to_fns(csv_path, path=y_path, header=header, suffix=suffix)
         
+        np.random.seed(0)
+        (train_x, train_y), (valid_x, valid_y) = random_split(valid_pct, fn_x, fn_y)
+        datasets = [cls(train_x, train_y, classes, **kwargs),
+                   cls(valid_x, valid_y, classes, **kwargs)]
+        return datasets
+       
 # Seems to speed up training by ~2%
-class DataPrefetcher():
-    def __init__(self, loader, stop_after=None, gpu=True):
-        self.gpu = gpu
-        self.loader = loader
-        self.dataset = loader.dataset
-        self.stream = torch.cuda.Stream()
-        self.stop_after = stop_after
-        self.next_input = None
-        self.next_target = None
 
-    def __len__(self):
-        return len(self.loader)
-
-    def preload(self):
-        try:
-            self.next_input, self.next_target = next(self.loaditer)
-        except StopIteration:
-            self.next_input = None
-            self.next_target = None
-            return
-        if self.gpu:
-            with torch.cuda.stream(self.stream):
-                self.next_input = self.next_input.cuda(async=True)
-                self.next_target = self.next_target.cuda(async=True).long()
-
-    def __iter__(self):
-        count = 0
-        self.loaditer = iter(self.loader)
-        self.preload()
-        while self.next_input is not None:
-            torch.cuda.current_stream().wait_stream(self.stream)
-            input = self.next_input
-            target = self.next_target
-            self.preload()
-            count += 1
-            yield input, target
-            if type(self.stop_after) is int and (count > self.stop_after):
-                break
+#class DataPrefetcher():
+#    def __init__(self, loader, stop_after=None, gpu=True):
+#        self.gpu = gpu
+#        self.loader = loader
+#        self.dataset = loader.dataset
+#        self.stream = torch.cuda.Stream()
+#        self.stop_after = stop_after
+#        self.next_input = None
+#        self.next_target = None
+#
+#    def __len__(self):
+#        return len(self.loader)
+#
+#    def preload(self):
+#        try:
+#            self.next_input, self.next_target = next(self.loaditer)
+#        except StopIteration:
+#            self.next_input = None
+#            self.next_target = None
+#            return
+#        if self.gpu:
+#            with torch.cuda.stream(self.stream):
+#                self.next_input = self.next_input.cuda(non_blocking=True)
+#                self.next_target = self.next_target.cuda(non_blocking=True).long()
+#
+#    def __iter__(self):
+#        count = 0
+#        self.loaditer = iter(self.loader)
+#        self.preload()
+#        while self.next_input is not None:
+#            torch.cuda.current_stream().wait_stream(self.stream)
+#            input = self.next_input
+#            target = self.next_target
+#            self.preload()
+#            count += 1
+#            yield input, target
+#            if type(self.stop_after) is int and (count > self.stop_after):
+#                break
                 
 def get_files(*fn_folders):
     if not isinstance(fn_folders, tuple): fn_folders = [fn_folders]
@@ -152,10 +96,8 @@ def get_files(*fn_folders):
     return fns
                 
 def update_model_dir(learner, base_dir):
-    learner.tmp_path = f'{base_dir}/tmp'
-    os.makedirs(learner.tmp_path, exist_ok=True)
-    learner.models_path = f'{base_dir}/models'
-    os.makedirs(learner.models_path, exist_ok=True)
+    learner.path = Path(f'{base_dir}')
+    (learner.path/learner.model_dir).mkdir(parents=True, exist_ok=True)
 
 def save_sched(sched, save_dir):
     log_dir = f'{save_dir}/training_logs'
@@ -180,12 +122,12 @@ def load_model(m, p, pop_last_n=0):
     for _ in range(pop_last_n): sd.popitem()
     learner.model.load_state_dict(sd, strict=False)
 
-class Copy(Transform):
-    def __init__(self):
-        super().__init__()
-
-    def do_transform(self, x, is_y):
-        return np.ascontiguousarray(x)
+#class Copy(Transform):
+#    def __init__(self):
+#        super().__init__()
+#
+#    def do_transform(self, x, is_y):
+#        return np.ascontiguousarray(x)
 
 # use model level data parallelism instead
 #class ParallelImageData(ImageData):
@@ -227,36 +169,6 @@ def open_im_class(fn, norm=False):
     shape = im.shape[:2]
     return np.broadcast_to(im, shape + (3,))
 
-def calc_mean_std(fn):
-    im = open_image_new(fn, norm=True)
-    mean, std = np.mean(im, axis=(0, 1)), np.std(im, axis=(0, 1))
-    return mean, std
-    
-def parallel_mean_std(fns, num_workers=None):
-    if not isinstance(fns, list): fns = [fns]
-    fns = [str(o) for o in fns]
-    with ProcessPoolExecutor(num_workers) as e:
-        res = e.map(calc_mean_std, fns)
-        
-    means, stds = zip(*res)
-    mean, std = np.mean(means, axis=0), np.std(stds, axis=0)
-    return mean, std
-    
-def to_class(im, labels, broadcast=True):
-    assert labels is not None
-    class_shape = im.shape[:-1]
-    classes, index = np.zeros(class_shape, dtype=np.int32), np.zeros(class_shape, dtype=np.bool)
-    for c, value in enumerate(labels):
-        np.all((im == value), axis=-1, out=index)
-        classes[index] = c + 1
-    if broadcast: classes = np.broadcast_to(classes[:,:,None], class_shape + (3,))
-    return classes
-
-def to_class_and_save(fn_im, fn_target, labels):
-    im = open_image_new(fn_im, norm=False, convert_to_rgb=True)
-    target = to_class(im, labels, broadcast=False)[...,None]
-    cv2.imwrite(str(fn_target), target)
-    
 def predict_tensor(learner, tensor):
     # tensor comes out of dataloader directely
     learner.model.eval()
@@ -276,17 +188,24 @@ def alpha_blend(x, y, alpha=0.5):
     ret += y * (1 - alpha)
     return ret
 
-def multi_class_iou(pred, target):
-    """
-    pred shape: [b, h, w, c]
-    target shape: [b, h, w]
-    """
-    pred = pred.argmax(-1)
+def to_path(*path:PathOrStr):
+    path = [Path(o) for o in path]
+    if len(path) == 1:
+        path = path[0]
+    return path
 
-def single_class_differentiable_iou(pred, target):
-    """
-    shape: [b, h, w]
-    """
-    #intersection = 
+def csv_to_fns(csv_path, path:Optional[PathOrStr]=None, header:Optional[Union[int,str]]='infer', suffix:Optional[str]='.png'):
+    df = pd.read_csv(csv_path, header=header)
+    fnames = df.iloc[:,0].str.lstrip()
+    if suffix: fnames = fnames + suffix
+    fnames = fnames.values
     
-    
+    if path:
+        path = Path(path)
+        fnames = [path/o for o in fnames]
+    return fnames
+
+def split_func(m, split_on):
+    c = children(m.module)
+    return [c[:split_on], c[split_on:]]
+

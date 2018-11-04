@@ -36,9 +36,7 @@ def crop_and_save(fns, path_target, size=512, overlap=0.1, grayscale=False, pad_
         pad = ceil((n_side * size - full_side) / 2)
         if print_stat:
             print_stat = False
-            print('overlap_p: ', overlap_p)
-            print('n_side: ', n_side)
-            print('pad: ', pad)
+            print('overlap_p: ', overlap_p, 'n_side: ', n_side, 'pad: ', pad)
         
         im = cv2.copyMakeBorder(im, pad, pad, pad, pad, pad_mode)
         new_side = full_side + 2 * pad
@@ -60,6 +58,7 @@ def crop_and_save(fns, path_target, size=512, overlap=0.1, grayscale=False, pad_
                 cv2.imwrite(str(new_fn), patch)
                 
         print(f'{counter} patchs saved to {str(path_target)} for img {fn.name}')
+        print()
         
 def parallel_crop_and_save(fns, path_target, size=512, overlap=0.1, grayscale=False, pad_mode=cv2.BORDER_REFLECT, num_workers=None,
                            recreate_target_path=False, labels=None, preprocess_fs=None):
@@ -75,13 +74,41 @@ def parallel_crop_and_save(fns, path_target, size=512, overlap=0.1, grayscale=Fa
         with ProcessPoolExecutor(num_workers) as e:
             list(tqdm_notebook(e.map(f, fns), total=len(fns)))
     else:
-            list(tqdm_notebook(map(f, fns), total=len(fns)))
+        list(tqdm_notebook(map(f, fns), total=len(fns)))
+
+def calc_mean_std(fn):
+    im = open_image_new(fn, norm=True)
+    mean, std = np.mean(im, axis=(0, 1)), np.std(im, axis=(0, 1))
+    return mean, std
+   
+def parallel_mean_std(fns, num_workers=None):
+    if not isinstance(fns, list): fns = [fns]
+    fns = [str(o) for o in fns]
+    with ProcessPoolExecutor(num_workers) as e:
+        res = e.map(calc_mean_std, fns)
         
-def crop_aerial(fn_dir, path_target, **args):
-    fns = [o for o in fn_dir.iterdir() if o.stem[0] != '.']
-    crop_and_save(fns, path_target, **args)
+    means, stds = zip(*res)
+    mean, std = np.mean(means, axis=0), np.mean(stds, axis=0)
+    return mean, std
     
-def parallel_rgb_to_labels(path_source_dir, path_target_dir, labels, num_workers=(cpu_count() // 2), recreate_target_path=False):
+def to_class(im, labels, broadcast=True):
+    assert labels is not None
+    class_shape = im.shape[:-1]
+    classes, index = np.zeros(class_shape, dtype=np.int32), np.zeros(class_shape, dtype=np.bool)
+    for c, value in enumerate(labels):
+        np.all((im == value), axis=-1, out=index)
+        classes[index] = c + 1
+    if broadcast: classes = np.broadcast_to(classes[:,:,None], class_shape + (3,))
+    return classes
+
+def to_class_and_save(fn_im, fn_target, labels):
+    im = open_image_new(fn_im, norm=False, convert_to_rgb=True)
+    target = to_class(im, labels, broadcast=False)[...,None]
+    cv2.imwrite(str(fn_target), target)
+ 
+        
+def parallel_rgb_to_labels(path_source_dir, path_target_dir, labels,
+        num_workers=None, recreate_target_path=False):
     path_source_dir, path_target_dir = Path(path_source_dir), Path(path_target_dir)
     if recreate_target_path: shutil.rmtree(str(path_target_dir), ignore_errors=True)
     path_target_dir.mkdir(exist_ok=True)
@@ -110,3 +137,5 @@ def filter_label_cm(im):
     im[np.invert(mask)] = 255
     im[mask] = 0
     return im
+
+
